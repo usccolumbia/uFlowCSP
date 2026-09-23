@@ -1,6 +1,6 @@
-# MeanFlow CSP
+# uFlowCSP
 
-Few-step crystal structure prediction with a MeanFlow transport over an all-atom
+20-100X Faster Few-step crystal structure prediction with a MeanFlow transport over an all-atom
 diffusion transformer. A full structure is decoded in 1–5 integration steps.
 
 Conditioning is **composition only** — the model is given a formula and generates
