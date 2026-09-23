@@ -1,0 +1,32 @@
+defaults:
+  - data: mp20_raw   # New raw data datamodule
+  - diffusion_module: meanflow_raw_formula_atomwise_system  # order + formula + atomwise + crystal-system token
+  - callbacks: diffusion_mp20_only
+  - logger: null
+  - trainer: default
+  - paths: default
+  - extras: default
+  - hydra: default
+  - _self_
+
+name: ""
+
+task_name: "train_meanflow_raw_formula_atomwise_system_cfg_supervised"
+tags: ["mp20_raw", "meanflow_raw", "formula_embedding", "atomwise_features", "crystal_system", "cfg_supervised", "train"]
+
+train: True
+test: True
+ckpt_path: null
+seed: 9
+
+conditioning:
+  # TRUE so the GT space-group label reaches the denoiser and the coarse crystal
+  # system can be derived from it. The fine space group is NOT used
+  # (denoiser.use_spacegroup_conditioning=false).
+  spacegroup: true
+
+# NOTE: the denoiser, transport, optimizer and scheduler for this run all come
+# from the `diffusion_module` config selected in `defaults` above (see
+# configs/diffusion_module/). train_diffusion.py instantiates only
+# `diffusion_module`, `data.datamodule`, `trainer`, `callbacks` and `logger`, so
+# there are deliberately no top-level `model:` / `transport:` blocks here.

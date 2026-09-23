@@ -1,0 +1,117 @@
+_target_: src.models.meanflow_raw_module.MeanFlowRawLitModule
+
+# No autoencoder for raw data
+# autoencoder_ckpt: null
+
+# ----------------------------------------------------------------------
+# This is an ADDITIVE copy of meanflow_raw_formula.yaml. The only difference is
+# the denoiser _target_ (MeanFlowSiTRawFormulaAtomwise instead of
+# MeanFlowSiTRawFormula) and the new `use_atomwise_features` flag below.
+# meanflow_raw_formula.yaml / meanflow_raw.yaml and their denoisers are
+# completely unchanged and unaffected by this file.
+# ----------------------------------------------------------------------
+
+denoiser:
+  _target_: src.models.denoisers.meanflow_sit_raw_formula_atomwise.MeanFlowSiTRawFormulaAtomwise
+  input_size: 100
+  atom_type_vocab_size: 120  # Z up to 118 + padding
+  atom_type_embed_dim: 32
+  coord_dim: 3
+  lattice_dim: 9
+  hidden_size: 768
+  depth: 12
+  num_heads: 12
+  mlp_ratio: 4.0
+  class_dropout_prob: 0.1
+  num_spacegroups: 230
+  predict_atom_types: true           # Output atom-type logits alongside velocity
+  atom_type_condition_dropout: 0.5   # Randomly drop atom-type input so model must predict them
+
+  # Formula-global composition embedding (same as meanflow_raw_formula.yaml).
+  # Adds e_formula (derived from normalized element counts) into the
+  # conditioning vector c = e_t + e_r + e_formula (+ e_spacegroup, if enabled).
+  use_formula_embedding: true
+
+  # NEW: explicit per-token chemistry features (Pauling electronegativity,
+  # atomic radius, period, group) concatenated onto each atom's own token,
+  # alongside its learned Z-embedding. Default true here; override with
+  # diffusion_module.denoiser.use_atomwise_features=false to A/B against
+  # MeanFlowSiTRawFormula's conditioning while still using this config.
+  use_atomwise_features: true
+
+# MeanFlow transport: training loss + sampler
+meanflow:
+  _target_: src.models.meanflow_transport.MeanFlowTransport
+  flow_ratio: 0.50
+  time_dist:
+    - lognorm
+    - -0.4
+    - 1.0
+  cfg_ratio: 0.10
+  cfg_scale: 2.0
+  jvp_api: funtorch
+  atom_loss_weight: 1.0              # Cross-entropy loss for joint atom-type generation
+
+  # ----------------------------------------------------------------------
+  # Spacegroup symmetry projection (CrystalFlow-style). All flags default
+  # to false — existing runs are completely unaffected. Enable from the
+  # CLI / slurm script via Hydra overrides:
+  #
+  #   diffusion_module.meanflow.proj_lattice=true
+  #   diffusion_module.meanflow.proj_coords_rotavg=true
+  #   diffusion_module.meanflow.sym_loss_weight=0.1
+  # ----------------------------------------------------------------------
+  proj_lattice: false                # stage 1: project lattice onto SG metric-tensor subspace
+  proj_coords_rotavg: false          # stage 2: rotational averaging of coord channels over SG ops
+  proj_coords_anchor: false          # stage 3: Wyckoff anchor expansion (NotImplemented — needs preprocessing)
+  sym_loss_weight: 0.0               # auxiliary ||u - sym(u)||^2 loss weight
+  sym_coord_dim: 3                   # raw representation: 3 coord channels per token
+  sym_lattice_dim: 9                 # raw representation: 9 lattice channels per token
+  sym_coords_are_fractional: false   # raw mode uses Cartesian coords
+
+  # ----------------------------------------------------------------------
+  # Torus (fractional-coordinate) transport. OFF by default - existing runs
+  # are completely unaffected. Enable from the CLI / slurm script via:
+  #
+  #   diffusion_module.meanflow.torus_coords=true
+  #
+  # When enabled, the coordinate channels are fractional (periodic on
+  # [0, 1)^3) and use a wrapped (minimum-image) geodesic interpolation with
+  # a uniform prior, instead of a Euclidean straight line with a Gaussian
+  # prior on Cartesian positions.
+  # ----------------------------------------------------------------------
+  torus_coords: false
+  torus_coord_dim: 3
+
+augmentations:
+  frac_coords: true
+  pos: true
+
+sampling:
+  num_samples: 1000
+  batch_size: 100
+  num_sampling_steps: 1
+  generate_atom_types: true  # Generate atom types from scratch — consistent with training
+  target_formula: ""
+  target_spacegroup: null
+  compute_novelty: false
+  relax_structures: false
+  data_dir: ${paths.data_dir}
+  visualize: true
+  save_dir: ${paths.viz_dir}
+  removeHs: false
+
+conditioning:
+  spacegroup: true
+  # Optional: order the CSP/inference formula's atoms by Pauling electronegativity
+  # so inference matches the canonical (MCFlow-style) training order. Default
+  # false -> legacy alphabetical order (existing runs unaffected).
+  formula_order_by_en: false
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1e-4
+  weight_decay: 0.0
+
+scheduler: null

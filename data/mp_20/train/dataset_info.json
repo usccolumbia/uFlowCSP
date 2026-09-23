@@ -1,0 +1,82 @@
+{
+  "builder_name": "csv",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "mp20_a_di_t",
+  "dataset_size": 135016791,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/chaitjo/MP20_ADiT@cc448f4a85a35d7488d446888a69f8b9cc3aac2d/raw/all.csv": {
+      "num_bytes": 134631081,
+      "checksum": null
+    }
+  },
+  "download_size": 134631081,
+  "features": {
+    "Unnamed: 0.1": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "Unnamed: 0": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "material_id": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "formation_energy_per_atom": {
+      "dtype": "float64",
+      "_type": "Value"
+    },
+    "band_gap": {
+      "dtype": "float64",
+      "_type": "Value"
+    },
+    "pretty_formula": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "e_above_hull": {
+      "dtype": "float64",
+      "_type": "Value"
+    },
+    "elements": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "cif": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "spacegroup.number": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "spacegroup.number.conv": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "cif.conv": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 269647872,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 135016791,
+      "num_examples": 45229,
+      "dataset_name": "mp20_a_di_t"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

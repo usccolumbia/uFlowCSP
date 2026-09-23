@@ -1,0 +1,20 @@
+defaults:
+  - ema
+  - model_checkpoint
+  - model_checkpoint_valid_rate
+  # - early_stopping
+  # - learning_rate_monitor
+  - _self_
+
+model_checkpoint:
+  dirpath: ${paths.output_dir}/checkpoints
+  filename: "uflow-epoch@{epoch}-step@{step}-val_mp20_loss@{val_mp20/loss:.4f}"
+  monitor: "val_mp20/loss"
+  mode: "min"
+  save_top_k: 1
+  save_last: True
+
+# early_stopping:
+#   monitor: "val/valid_rate"
+#   patience: 100
+#   mode: "max"

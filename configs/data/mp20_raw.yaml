@@ -1,0 +1,24 @@
+datamodule:
+  _target_: src.data.mp20_raw_datamodule.MP20RawDataModule
+
+  mp20_root: ${paths.data_dir}/mp_20
+
+  batch_size: 256
+  num_workers: 16
+  pin_memory: true
+  force_reload: false
+  exclude_ids_csv: null
+  exclude_ids: []
+
+  # Dataset selection (mp20 default keeps existing behaviour/caches).
+  # For benchmarks, override via CLI: +data.datamodule.dataset=perov
+  #   +data.datamodule.data_root=${paths.data_dir}/perov  split_type=perov
+  dataset: mp20            # 'mp20' | 'perov' | 'mpts'
+  data_root: null          # defaults to mp20_root when null
+
+  # Data split configuration
+  # 'random' = size-based random split; any other NAME loads
+  # data/splits/<name>_{train,val,test}_ids.json (e.g. 'difCSP', 'perov', 'mpts').
+  split_type: difCSP
+  train_split: 0.8  # Ignored if split_type != 'random'
+  val_split: 0.1    # Ignored if split_type != 'random'

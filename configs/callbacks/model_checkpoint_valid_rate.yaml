@@ -1,0 +1,12 @@
+model_checkpoint_valid_rate:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  dirpath: ${paths.output_dir}/checkpoints
+  filename: "uflow-best_valid-epoch@{epoch}-step@{step}-valid_rate@{val_mp20/valid_rate:.4f}"
+  monitor: "val_mp20/valid_rate"
+  mode: "max"
+  save_top_k: 2
+  save_last: False
+  verbose: True
+  auto_insert_metric_name: False
+  save_weights_only: False
+  save_on_train_epoch_end: False

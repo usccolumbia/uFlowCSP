@@ -1,0 +1,53 @@
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# --- checkpoints and weights ---
+*.ckpt
+*.pt
+
+# --- run outputs ---
+# hydra run dirs, generated structures, chained campaign trees
+logs/
+results/
+results_generate/
+campaigns/
+wandb/
+*.log
+match.out
+match.er
+*.out
+*.err
+
+# --- generated data ---
+# gt_cifs_test/ is built by make_gt_cifs.py
+*.cif
+data/mp_20/processed/*
+!data/mp_20/processed/.gitkeep
+# built by make_knownz_csv.py
+data/splits/difCSP_test_knownz_full.csv
+
+# --- archives ---
+*.zip
+*.tar.gz
+
+# --- editors / os ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- not part of the release ---
+# leftovers from the research branches; keep them out of the public tree
+external/
+figure2/
+error_analysis/
+paper_originals_pkg/
+*.pptx
+*.pdf
+make_project_slides.py
+.gittu
+slurm/*.txt
+data/sio2_si3o6.txt
