@@ -1,4 +1,4 @@
-# uFlowCSP: Crystal Structure Prediction using Mean flow generative models
+## uFlowCSP: Crystal Structure Prediction using Mean flow generative models
 
 uFlowCSP is a deep learning-based generative model designed for crystal structure prediction (CSP) with a MeanFlow transport over an all-atom diffusion transformer. Introduced in September 2026 by researchers including Sourin Dey, Jianjun Hu and etc, it drastically accelerates the process of computational materials discovery. In general, it can 20-100X Faster Few-step crystal structure prediction with competitive or better accuracy. A full structure is decoded in 1–5 integration steps.
 
