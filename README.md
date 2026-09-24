@@ -1,4 +1,4 @@
-# uFlowCSP: Crystal Structure Prediction using Mean Flow Generative Models
+## uFlowCSP: Crystal Structure Prediction using Mean Flow Generative Models
 
 uFlowCSP predicts crystal structures from a chemical formula alone. It pairs a
 MeanFlow transport with an all-atom diffusion transformer and decodes a full
