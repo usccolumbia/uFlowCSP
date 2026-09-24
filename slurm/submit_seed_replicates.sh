@@ -191,7 +191,7 @@ CKDIR="$1"; MODE="$2"; CSV="$3"; K="$4"; BATCH="$5"; STEPS="$6"; OUT="$7"
 if [ "$MODE" = "bestvalid" ]; then
     # Highest valid_rate wins; the rate is the last @-field of the filename.
     CKPT=$(ls -1 "$CKDIR"/uflow-best_valid-*.ckpt 2>/dev/null \
-           | awk -F 'valid_rate@' '{print $2"\t"$0}' | sort -k1,1 -gr | head -1 | cut -f2-)
+           | awk -F 'valid_rate@' '{print $2"\t"$0}' | sort -k1,1 -gr | head -1 | cut -f2- || true)
     if [ -z "$CKPT" ]; then
         echo "WARN: no uflow-best_valid-*.ckpt in $CKDIR -- falling back to last.ckpt." >&2
         echo "WARN: this row is NOT best-val selected; on MP-20 that fallback cost -5.2 pts." >&2

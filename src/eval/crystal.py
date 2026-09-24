@@ -42,7 +42,11 @@ class Crystal:
         if self.constructed:
             self.get_composition()
             self.get_validity()
-            self.get_fingerprints()
+            # Fingerprints only for structurally valid crystals: CrystalNN on a
+            # collapsed cell (vol/atom << 1 A^3) can take minutes per sample, and
+            # an invalid crystal's `valid` is already False either way.
+            if self.struct_valid:
+                self.get_fingerprints()
         else:
             self.valid = False
             self.comp_valid = False

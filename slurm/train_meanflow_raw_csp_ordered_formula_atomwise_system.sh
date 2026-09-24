@@ -240,7 +240,7 @@ ${exclude_line}
 data=mp20_raw
 callbacks=diffusion_mp20_only
 trainer=default
-trainer.check_val_every_n_epoch=100
+trainer.check_val_every_n_epoch=${CHECK_VAL_EVERY:-100}
 +data.datamodule.batch_size=${BATCH_SIZE:-256}
 +trainer.accumulate_grad_batches=${GRAD_ACCUM:-1}
 trainer.log_every_n_steps=100

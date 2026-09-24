@@ -51,3 +51,4 @@ make_project_slides.py
 .gittu
 slurm/*.txt
 data/sio2_si3o6.txt
+machine.file.*
