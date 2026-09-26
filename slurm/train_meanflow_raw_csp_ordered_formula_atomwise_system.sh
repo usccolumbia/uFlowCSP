@@ -44,14 +44,9 @@
 #  embedding is disabled (denoiser.use_spacegroup_conditioning=false), so the
 #  model only ever sees the coarse crystal system, never the full space group.
 #
-#  ---------------------------------------------------------------------------
-#  IMPORTANT (formula-only evaluation legitimacy):
-#  For a legitimately formula-only eval you must NOT feed the ground-truth space
-#  group at inference. Either (a) pass null (unconditional), or (b) ENUMERATE the
-#  7 crystal systems across the per-formula samples (e.g. ~7 of your 50 samples
-#  per system) and let the energy ranker pick the best. Both stay formula-only.
-#  A matched enumerate-sampling script is a follow-up, not included here.
-#  ---------------------------------------------------------------------------
+#  At inference the space-group input is either null (unconditional) or an
+#  enumeration over the 7 crystal systems across the per-formula samples; a
+#  matched enumerate-sampling script is not included here.
 #
 #  With use_crystal_system=false this reproduces
 #  train_meanflow_raw_csp_ordered_formula_atomwise.sh's conditioning behaviour
