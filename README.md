@@ -2,8 +2,8 @@
 
 uFlowCSP predicts crystal structures from a chemical formula alone. It pairs a
 MeanFlow transport with an all-atom diffusion transformer and decodes a full
-structure — lattice and every atomic position — in 1–5 integration steps, 20–100×
-faster than many-step generative CSP models at competitive or better accuracy.
+structure — lattice and every atomic position — in 1–5 integration steps, rather
+than the hundreds to thousands of steps many-step generative CSP models take.
 
 Conditioning is **composition only**: no space group, no reference cell.
 
@@ -120,7 +120,7 @@ properties — see `--relax` below.
 | Sample faster | `--num_sampling_steps 1` (one-step decoding) |
 | Relax the output with ORB v3 | install ORB (below), then append `--relax` |
 | Relax on CPU | `--relax --relax_device cpu --orb_model orb_v3_conservative_20_omat --relax_steps 50` |
-| Also condition on a space group | `--use_spacegroup` (off by default; reported results are composition-only) |
+| Also condition on a space group | `--use_spacegroup` (off by default; conditioning is composition-only) |
 | See every option | `python src/match_meanflow_raw_all_formulas.py --help` |
 
 **Installing the ORB relaxer.** Two commands, because `orb-models` declares
@@ -180,7 +180,7 @@ env by name; pass `CONDA_ENV=<name>` if yours differs.
 | `data/mp_20/raw/all.csv` | MP-20 source, one row per structure with `material_id`, `cif`, `spacegroup.number` (Git LFS, ~135 MB) |
 | `data/splits/difCSP_{train,val,test}_ids.json` | The canonical CDVAE/DiffCSP split — 27136 / 9047 / 9046 material ids. Fixed; do not regenerate |
 | `data/splits/difCSP_test.csv` | The 9046 test materials as `material_id, primitive_formula, spacegroup` |
-| `180_primitive.csv` | The 180-formula CSPBench lane — a separate benchmark; never mix its numbers with the MP-20 ones |
+| `180_primitive.csv` | The 180-formula CSPBench lane — a separate benchmark from MP-20 |
 
 `data/mp_20/train/*.arrow` and `dataset_dict.json` are a HuggingFace copy of the
 same data. Nothing here reads them; `all.csv` is the only input.
@@ -203,8 +203,8 @@ python make_knownz_csv.py \
 ```
 
 The known-Z CSV replaces each reduced formula with the true primitive-cell
-contents (`Ti2O4`, not `TiO2`) — the DiffCSP / CrystalFlow convention, and what
-makes the numbers comparable to theirs. Conditioning stays composition-only.
+contents (`Ti2O4`, not `TiO2`) — the DiffCSP / CrystalFlow convention.
+Conditioning stays composition-only.
 
 The 180-formula lane also needs a `ground_truth_180/` folder of reference cells.
 It is **not** shipped and cannot be rebuilt from the files above (only 151 of its
@@ -240,10 +240,10 @@ Knobs, all environment variables:
 **Using your own checkpoint.** Training writes
 `logs/<task>/runs/<run>/checkpoints/` with `last.ckpt` plus
 `uflow-best_valid-…-valid_rate@<v>.ckpt` files. Sample from the best-validation
-file with the highest `valid_rate`, **not** `last.ckpt` — half of all runs peak
-near epoch 499 and degrade by 699, and the selection is worth ~5 points. Copy it
-to `model.ckpt` and follow [Sample](#3-sample); the rename also avoids quoting
-the `@` in its name.
+file with the highest `valid_rate`, **not** `last.ckpt`, since validation
+performance does not increase monotonically to the final epoch. Copy it to
+`model.ckpt` and follow [Sample](#3-sample); the rename also avoids quoting the
+`@` in its name.
 
 ## 7. End-to-end benchmark campaign
 
@@ -266,12 +266,11 @@ campaigns/seed_replicates/<CAMPAIGN>/eval/seed<N>_s<S>/summary.json
 
 Read `diffcsp_match_rate` and `diffcsp_mean_rmse`. Check that `n_formulas_total`
 is 9046 and `n_no_folder` is 0 — a non-zero `n_no_folder` means the sampling job
-was truncated and the number is not comparable.
+was truncated.
 
 `SEEDS`, `K`, `STEPS_LIST`, `MAX_EPOCHS` and `PART` are environment overrides.
-The script's header documents the reference numbers each row should land near,
-and the ~2.6-point run-to-run spread that makes single-run comparisons
-meaningless.
+Run-to-run spread across seeds is appreciable, so the campaign submits several
+seeds per configuration and the per-seed summaries are aggregated.
 
 ---
 

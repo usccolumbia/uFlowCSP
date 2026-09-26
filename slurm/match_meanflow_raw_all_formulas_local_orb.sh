@@ -29,8 +29,8 @@
 #                                   use cpu/auto if this box has no GPU)
 #     ORB_MODEL=<name>        ORB pretrained model (default below; use
 #                             orb_v3_conservative_20_omat for a faster/lighter run)
-#     DISABLE_SPACEGROUP=0    feed the GT spacegroup (default 1 = off; leaks
-#                             symmetry, not a formula-only evaluation)
+#     DISABLE_SPACEGROUP=0    feed the GT spacegroup (default 1 = off, so
+#                             inference is formula-only)
 #     PYTHON=<path>           python interpreter to use (default: python)
 #
 #  One-time install (in your local env):  pip install orb-models
