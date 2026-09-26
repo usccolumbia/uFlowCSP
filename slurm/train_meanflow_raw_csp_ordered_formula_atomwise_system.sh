@@ -203,10 +203,9 @@ cs_suffix="_cs"
 [ "$use_crystal_system" = "false" ] && cs_suffix="_cs-off"
 name="${run_name_prefix}train_meanflow_raw_${RUN_DATE}_csp_cfgscale${cfg_scale}_fr${flow_ratio}_${jvp_api}_split${split_type}_CFG${cfg_dropout}${sg_suffix}${alex_suffix}${sym_suffix}${ord_suffix}${formula_suffix}${atomwise_suffix}${cs_suffix}"
 
-#! Checkpoint path (null = fresh training run). CKPT_PATH_OVERRIDE lets a campaign
-#  force a fresh run (CKPT_PATH_OVERRIDE=null) -- required for a clean hyperparameter
-#  sweep -- or point elsewhere, without editing this line. Unset => original resume.
-ckpt_path=${CKPT_PATH_OVERRIDE:-"logs/train_meanflow_raw_csp_ordered_formula_atomwise_system/runs/_2026-07-10_03-35-27/checkpoints/last.ckpt"}
+#! Checkpoint path (null = fresh training run). Set CKPT_PATH_OVERRIDE to a
+#  last.ckpt to resume, without editing this line. Unset => fresh run.
+ckpt_path=${CKPT_PATH_OVERRIDE:-null}
 
 #! Per-dataset root + exclusion. mp20 keeps its exact absolute root and the
 #  180-formula exclusion; benchmarks use data/<ds> (relative to the submit dir)
