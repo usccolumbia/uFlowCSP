@@ -69,7 +69,7 @@ TRAIN_BATCH=${TRAIN_BATCH:-256}
 # ---- fixed paths ------------------------------------------------------------
 # NOT overridable: the campaign is defined against this training script.
 TRAIN_SCRIPT="slurm/train_meanflow_raw_csp_ordered_formula_atomwise_system.sh"
-GEN_PY="src/match_meanflow_raw_all_formulas.py"
+GEN_PY="src/uflowcsp.py"
 EVAL_SCRIPT="slurm/select_top5_and_evaluate.sh"
 TRAIN_RUNS_DIR="logs/train_meanflow_raw_csp_ordered_formula_atomwise_system/runs"
 FULL_CSV=${FULL_CSV:-data/splits/difCSP_test.csv}
@@ -193,7 +193,7 @@ ls -1 "$CKDIR"/uflow-best_valid-*.ckpt 2>/dev/null || true
 # Known-Z protocol: RAW structures (no relaxation before matching),
 # material-prefixed filenames so each material owns its candidates, and NO
 # space-group conditioning (formula-only inference).
-PYTHONNOUSERSITE=1 "$PY" src/match_meanflow_raw_all_formulas.py \
+PYTHONNOUSERSITE=1 "$PY" src/uflowcsp.py \
     --ckpt_path "$CKPT" --csv_path "$CSV" \
     --num_samples_per_formula "$K" --batch_size "$BATCH" \
     --num_sampling_steps "$STEPS" --noise_scale 1.0 \

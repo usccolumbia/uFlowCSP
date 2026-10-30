@@ -258,6 +258,7 @@ def array_dict_to_crystal(
     x: dict[str, np.ndarray],
     save: bool = False,
     save_dir_name: str = "",
+    compute_fingerprints: bool = True,
 ) -> Crystal:
     """Method to convert a dictionary of numpy arrays to a Crystal object which is compatible with
     StructureMatcher (used for evaluations). Previously called 'safe_crystal', as it return a
@@ -274,13 +275,15 @@ def array_dict_to_crystal(
             - 'sample_idx': Index of the sample in the dataset.
         save: Whether to save the crystal as a CIF file.
         save_dir_name: Directory to save the CIF file.
+        compute_fingerprints: Compute the composition and CrystalNN fingerprints used by
+            coverage/property metrics. Set False when only validity is needed (much faster).
 
     Returns:
         Crystal: Crystal object, optionally saved as a CIF file.
     """
     # Check if the lattice angles are in a valid range
     if np.all(50 < x["angles"]) and np.all(x["angles"] < 130):
-        crys = Crystal(x)
+        crys = Crystal(x, compute_fingerprints=compute_fingerprints)
         if save:
             os.makedirs(save_dir_name, exist_ok=True)
             crys.structure.to(os.path.join(save_dir_name, f"crystal_{x['sample_idx']}.cif"))
@@ -293,6 +296,7 @@ def array_dict_to_crystal(
                 "lengths": 100 * np.ones_like(x["lengths"]),
                 "angles": np.ones_like(x["angles"]) * 90,
                 "sample_idx": x["sample_idx"],
-            }
+            },
+            compute_fingerprints=compute_fingerprints,
         )
     return crys

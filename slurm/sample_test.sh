@@ -71,4 +71,4 @@ set -- --ckpt_path "$CKPT" \
 
 [ "$RELAX" = "1" ] && set -- "$@" --relax
 
-exec "$PYTHON" src/match_meanflow_raw_all_formulas.py "$@"
+exec "$PYTHON" src/uflowcsp.py "$@"

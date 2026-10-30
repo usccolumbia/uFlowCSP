@@ -89,7 +89,7 @@ mkdir -p results_generate
 exec 1>>"match.out"
 exec 2>>"match.er"
 
-CMD="$PY src/match_meanflow_raw_all_formulas.py \
+CMD="$PY src/uflowcsp.py \
 --ckpt_path \"$CKPT_PATH\" \
 --csv_path \"$CSV_PATH\" \
 --num_samples_per_formula \"$NUM_SAMPLES_PER_FORMULA\" \

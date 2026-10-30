@@ -8,7 +8,7 @@ ground truth.
 Inputs
 ------
 - gen_dir:    <gen_dir>/<formula>/sample_<N>.cif   (relaxed output of
-              src/match_meanflow_raw_all_formulas.py with --relax)
+              src/uflowcsp.py with --relax)
 - gt_dir:     directory of ground-truth CIFs named <formula>.cif
 - csv:        the input CSV with material_id, primitive_formula, spacegroup
 - output_dir: where to write top-5 cifs + per-formula CSV + summary JSON
@@ -419,7 +419,7 @@ def predict_ranked(cif_paths, ranker, chgnet, matris_energy_cache):
 def mid_file_tag(material_id: str) -> str:
     """Filename prefix the sampler writes for a material under --material_prefix.
 
-    Must stay byte-identical to match_meanflow_raw_all_formulas.py, which builds
+    Must stay byte-identical to uflowcsp.py, which builds
     it as re.sub(r"[^A-Za-z0-9_.-]+", "", material_id).
     """
     return re.sub(r"[^A-Za-z0-9_.-]+", "", str(material_id).strip())

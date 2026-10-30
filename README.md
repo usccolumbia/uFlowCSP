@@ -80,7 +80,7 @@ List formulas in a CSV with a `primitive_formula` column, then run the sampler:
 ```bash
 printf 'primitive_formula\nSiO2\nNaCl\nSrTiO3\n' > test.csv
 
-python src/match_meanflow_raw_all_formulas.py \
+python src/uflowcsp.py \
     --ckpt_path model.ckpt \
     --csv_path test.csv \
     --num_samples_per_formula 5 \
@@ -115,13 +115,14 @@ properties — see `--relax` below.
 
 | Want to | Do |
 |---|---|
+| Skip the CSV | `--formula SiO2` (or several: `--formula SiO2 NaCl`) instead of `--csv_path` |
 | Sample more formulas | add rows to the CSV |
 | Use a CSV with a different column name | `--formula_col <name>` (`180_primitive.csv` ships as an example) |
 | Sample faster | `--num_sampling_steps 1` (one-step decoding) |
 | Relax the output with ORB v3 | install ORB (below), then append `--relax` |
 | Relax on CPU | `--relax --relax_device cpu --orb_model orb_v3_conservative_20_omat --relax_steps 50` |
 | Also condition on a space group | `--use_spacegroup` (off by default; conditioning is composition-only) |
-| See every option | `python src/match_meanflow_raw_all_formulas.py --help` |
+| See every option | `python src/uflowcsp.py --help` |
 
 **Installing the ORB relaxer.** Two commands, because `orb-models` declares
 `torch>=2.6` while this stack is on 2.5.1:

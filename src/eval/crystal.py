@@ -27,7 +27,7 @@ class Crystal:
     Adapted from: https://github.com/txie-93/cdvae
     """
 
-    def __init__(self, crys_array_dict):
+    def __init__(self, crys_array_dict, compute_fingerprints=True):
         self.frac_coords = crys_array_dict["frac_coords"]
         self.atom_types = crys_array_dict["atom_types"]
         self.sample_idx = crys_array_dict["sample_idx"]
@@ -42,11 +42,17 @@ class Crystal:
         if self.constructed:
             self.get_composition()
             self.get_validity()
-            # Fingerprints only for structurally valid crystals: CrystalNN on a
-            # collapsed cell (vol/atom << 1 A^3) can take minutes per sample, and
-            # an invalid crystal's `valid` is already False either way.
-            if self.struct_valid:
+            # Fingerprints only feed CDVAE-style coverage/property metrics. The
+            # per-site CrystalNN fingerprint is ~99% of construction time
+            # (~0.35 s per structure), so callers that only need validity skip it.
+            # It is also skipped for structurally invalid crystals: CrystalNN on a
+            # collapsed cell (vol/atom << 1 A^3) can take minutes per sample, and an
+            # invalid crystal's `valid` is already False either way.
+            if compute_fingerprints and self.struct_valid:
                 self.get_fingerprints()
+            else:
+                self.comp_fp = None
+                self.struct_fp = None
         else:
             self.valid = False
             self.comp_valid = False
