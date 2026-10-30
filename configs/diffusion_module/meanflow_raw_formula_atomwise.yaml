@@ -55,7 +55,7 @@ meanflow:
   # ----------------------------------------------------------------------
   # Spacegroup symmetry projection (CrystalFlow-style). All flags default
   # to false — existing runs are completely unaffected. Enable from the
-  # CLI / slurm script via Hydra overrides:
+  # command line via Hydra overrides:
   #
   #   diffusion_module.meanflow.proj_lattice=true
   #   diffusion_module.meanflow.proj_coords_rotavg=true
@@ -71,7 +71,7 @@ meanflow:
 
   # ----------------------------------------------------------------------
   # Torus (fractional-coordinate) transport. OFF by default - existing runs
-  # are completely unaffected. Enable from the CLI / slurm script via:
+  # are completely unaffected. Enable from the command line via:
   #
   #   diffusion_module.meanflow.torus_coords=true
   #

@@ -12,7 +12,7 @@ Three modes:
      data/splits/difCSP_test_ids.json -- the 9046 test material_ids
      -> gt_cifs_test/<material_id>.cif
 
-   That output directory is what slurm/submit_seed_replicates.sh and
+   That output directory is what scripts/benchmark_mp20.sh and
    select_top5_and_evaluate.py --per-material expect. Takes a few minutes:
    all.csv is ~135 MB and every cif is written as its own file.
 

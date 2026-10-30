@@ -21,11 +21,11 @@ University of South Carolina (September 2026).
 3. [Sample](#3-sample)
 4. [Options](#4-options)
 
-**Part 2 — Train and benchmark** (Slurm cluster)
+**Part 2 — Train and benchmark** (one GPU)
 
 5. [Extra setup](#5-extra-setup)
 6. [Train](#6-train)
-7. [End-to-end benchmark campaign](#7-end-to-end-benchmark-campaign)
+7. [Benchmark on MP-20](#7-benchmark-on-mp-20)
 
 [Troubleshooting](#troubleshooting) · [Citation](#citation)
 
@@ -132,8 +132,8 @@ pip install --no-deps orb-models==0.5.5
 pip install cached_path dm-tree
 ```
 
-ORB downloads its weights on first use, so that first run needs internet. If
-your compute nodes are offline, warm the cache on the login node:
+ORB downloads its weights on first use, so that first run needs internet. To
+download them ahead of time:
 
 ```bash
 python -c "from orb_models.forcefield import pretrained; pretrained.orb_v3_conservative_20_omat(device='cpu')"
@@ -168,11 +168,6 @@ That is the only manual data step — everything else is built on demand.
 **Weights & Biases** logging is on by default: `wandb login` once, or export
 `WANDB_API_KEY`, or set `WANDB_MODE=offline`, or append `logger=null`.
 
-**Slurm partitions.** The `#SBATCH -p` headers name this project's partitions
-(`gpu-A100`, `gpu-H200`). Override with `sbatch -p <your-partition>`, or
-`PART=<your-partition>` for the campaign. The scripts activate the `meanflow`
-env by name; pass `CONDA_ENV=<name>` if yours differs.
-
 <details>
 <summary>Data files: what ships and what is derived</summary>
 
@@ -192,7 +187,7 @@ same data. Nothing here reads them; `all.csv` is the only input.
 | `gt_cifs_test/` | `make_gt_cifs.py` | before any MP-20 evaluation |
 | `data/splits/difCSP_test_knownz_full.csv` | `make_knownz_csv.py` | before any known-Z evaluation |
 
-The campaign builds the last two itself if they are missing. To build them by
+`scripts/benchmark_mp20.sh` builds the last two itself if they are missing. To build them by
 hand:
 
 ```bash
@@ -209,69 +204,67 @@ Conditioning stays composition-only.
 
 The 180-formula lane also needs a `ground_truth_180/` folder of reference cells.
 It is **not** shipped and cannot be rebuilt from the files above (only 151 of its
-180 materials exist in MP-20). The MP-20 campaign does not use it.
+180 materials exist in MP-20). The MP-20 benchmark does not use it.
 
 </details>
 
 ## 6. Train
 
-The released model — atom ordering + formula embedding + per-atom chemistry
-features + coarse crystal-system token:
+Train the released model — atom ordering + formula embedding + per-atom chemistry
+features + coarse crystal-system token — from the repository root:
 
 ```bash
-sbatch slurm/train_meanflow_raw_csp_ordered_formula_atomwise_system.sh
+bash scripts/train.sh
 ```
 
-Its settings are the script's defaults; spelled out, they are
-`0.25 1.5 difCSP false false false 0.0 symmetry false false true true true`. The
-other three `train_meanflow_raw_csp_ordered*.sh` scripts are the ablation rungs
-below it (ordering only, +formula, +atomwise), each a strict subset of the next.
-
-Knobs, all environment variables:
+Append any Hydra override at the end, e.g. `bash scripts/train.sh logger=null`
+to train without Weights & Biases. Other settings are environment variables:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `SEED` | 9 | random seed; the only thing varied across replicates |
+| `SEED` | 9 | random seed |
 | `MAX_EPOCHS` | 700 | training length |
-| `BATCH_SIZE` | 256 | |
-| `CKPT_PATH_OVERRIDE` | — | `null` forces a fresh run instead of resuming |
-| `CAMPAIGN_LABEL` | — | pins the output directory name |
-| `CONDA_ENV` | `meanflow` | env to activate |
+| `BATCH_SIZE` | 256 | lower it if the GPU runs out of memory |
+| `RESUME` | — | path to a `last.ckpt` to continue a run |
+| `FORMULA_EMBEDDING` | true | `false` trains without the formula embedding |
+| `ATOMWISE_FEATURES` | true | `false` trains without the per-atom chemistry features |
+| `CRYSTAL_SYSTEM` | true | `false` trains without the crystal-system token |
+
+For example, `SEED=10 CRYSTAL_SYSTEM=false bash scripts/train.sh`.
 
 **Using your own checkpoint.** Training writes
-`logs/<task>/runs/<run>/checkpoints/` with `last.ckpt` plus
-`uflow-best_valid-…-valid_rate@<v>.ckpt` files. Sample from the best-validation
-file with the highest `valid_rate`, **not** `last.ckpt`, since validation
-performance does not increase monotonically to the final epoch. Copy it to
-`model.ckpt` and follow [Sample](#3-sample); the rename also avoids quoting the
+`logs/train_meanflow_raw_csp_ordered_formula_atomwise_system/runs/<run>/checkpoints/`
+with `last.ckpt` plus `uflow-best_valid-…-valid_rate@<v>.ckpt` files. Sample from
+the best-validation file with the highest `valid_rate`, **not** `last.ckpt`, since
+validation performance does not increase monotonically to the final epoch. Copy it
+to `model.ckpt` and follow [Sample](#3-sample); the rename also avoids quoting the
 `@` in its name.
 
-## 7. End-to-end benchmark campaign
+## 7. Benchmark on MP-20
 
-One command runs train → sample → evaluate, chained with Slurm dependencies,
-one chain per seed:
+Score a checkpoint on the 9046 MP-20 test materials under the DiffCSP protocol
+(any-of-k structure match, no relaxation, each material scored against only its
+own candidates):
 
 ```bash
-bash slurm/submit_seed_replicates.sh        # repo root, on the login node
+bash scripts/benchmark_mp20.sh model.ckpt
 ```
 
-It pins the released configuration, picks the best-validation checkpoint inside
-each sampling job, samples the 9046 known-Z test materials at k=20 with S=1 and
-S=5 steps, and evaluates under the DiffCSP protocol (any-of-k, no relaxation, no
-energy ranker, no space-group analysis, own candidates only). Missing data files
-are built on the way in. Results:
+Pass a `checkpoints/` directory instead of a file to use its best-validation
+checkpoint. The defaults are k=20 candidates and S=5 steps; set `K` and `STEPS`
+to change them, e.g. `STEPS=1 bash scripts/benchmark_mp20.sh model.ckpt`. The
+reference CIFs and the known-Z CSV are built on the first run. Results:
 
 ```
-campaigns/seed_replicates/<CAMPAIGN>/eval/seed<N>_s<S>/summary.json
+results/mp20_S<S>_k<K>/eval/summary.json
 ```
 
 Read `diffcsp_match_rate` and `diffcsp_mean_rmse`. Check that `n_formulas_total`
-is 9046 and `n_no_folder` is 0 — a non-zero `n_no_folder` means the sampling job
-was truncated.
+is 9046 and `n_no_folder` is 0; a non-zero `n_no_folder` means sampling stopped
+early.
 
-`SEEDS`, `K`, `STEPS_LIST`, `MAX_EPOCHS` and `PART` are environment overrides.
-Run-to-run spread across seeds is appreciable, so the campaign submits several
-seeds per configuration and the per-seed summaries are aggregated.
+Results vary between training seeds. To estimate the spread, train with several
+values of `SEED` and benchmark each run.
 
 ---
 
@@ -320,12 +313,8 @@ The download was probably interrupted. Check `md5sum model.ckpt` against
 
 #### Training dies immediately with a W&B error
 
-The job has no Weights & Biases credentials. `wandb login`, or submit with
-`WANDB_MODE=offline`.
-
-#### A Slurm script fails with `sbatch: error: invalid partition`
-
-See **Slurm partitions** under [Extra setup](#5-extra-setup).
+No Weights & Biases credentials are set. Run `wandb login`, or train with
+`WANDB_MODE=offline`, or append `logger=null`.
 
 ---
 

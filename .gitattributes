@@ -1,6 +1,5 @@
 # Normalise line endings: everything text is stored and checked out as LF.
-# Shell scripts with CRLF fail on Linux ("\r: command not found"), and these
-# launchers are meant to be sbatch'd on a cluster.
+# Shell scripts with CRLF fail on Linux ("\r: command not found").
 * text=auto eol=lf
 
 *.png binary

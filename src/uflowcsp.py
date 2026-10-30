@@ -1,12 +1,6 @@
 import argparse
 import inspect
-import os
-import shutil
-import signal
-import sys
-import tempfile
 import traceback
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -156,16 +150,6 @@ def parse_args():
                              "multiple rows share a reduced formula (different cell "
                              "sizes) and would otherwise overwrite each other. "
                              "Off by default = existing filenames, unchanged.")
-    parser.add_argument("--stage_dir", default="auto",
-                        help="Where CIFs are written before being copied to "
-                             "--save_generated_dir. auto (default): inside a Slurm job, "
-                             "stage on node-local disk ($SLURM_TMPDIR, $TMPDIR or /tmp) and "
-                             "copy once at the end, because creating many small files on a "
-                             "network file system is slow; outside Slurm, write directly. "
-                             "none: always write directly. Any other value: stage under "
-                             "that directory.")
-    parser.add_argument("--copy_workers", type=int, default=16,
-                        help="Threads used to copy staged files to --save_generated_dir.")
     parser.add_argument("--time_trials", type=int, default=0,
                         help="If >0, run a TIMING benchmark instead of saving: time "
                              "only the sampling calls over this many materials (after "
@@ -221,30 +205,6 @@ def parse_args():
                         help="Hold the cell fixed; move fractional coordinates only.")
 
     return parser.parse_args()
-
-
-def resolve_stage_root(stage_dir: str):
-    """Return the directory to stage CIFs under, or None to write directly."""
-    if stage_dir == "none":
-        return None
-    if stage_dir == "auto":
-        if not os.environ.get("SLURM_JOB_ID"):
-            return None
-        return Path(os.environ.get("SLURM_TMPDIR") or os.environ.get("TMPDIR")
-                    or tempfile.gettempdir())
-    return Path(stage_dir)
-
-
-def copy_staged_tree(src_root: Path, dst_root: Path, workers: int) -> int:
-    """Copy every file under src_root to the same relative path under dst_root, then
-    delete src_root. Threads hide the per-file latency of network file systems."""
-    files = [f for f in src_root.rglob("*") if f.is_file()]
-    for d in {f.parent for f in files}:
-        (dst_root / d.relative_to(src_root)).mkdir(parents=True, exist_ok=True)
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-        list(ex.map(lambda f: shutil.copyfile(f, dst_root / f.relative_to(src_root)), files))
-    shutil.rmtree(src_root, ignore_errors=True)
-    return len(files)
 
 
 def normalize_formula(formula: str) -> str:
@@ -557,153 +517,137 @@ def main():
     summary = []
     summary_csv = gen_base_dir / "generation_summary.csv"
 
-    stage_root = resolve_stage_root(args.stage_dir)
-    if stage_root is None:
-        write_dir = gen_base_dir
-    else:
-        stage_root.mkdir(parents=True, exist_ok=True)
-        write_dir = Path(tempfile.mkdtemp(prefix="uflowcsp_", dir=stage_root))
-        print(f"Staging CIFs in {write_dir}; copying to {gen_base_dir} at the end.")
-        # Slurm sends SIGTERM before killing a job; exiting normally runs the
-        # finally block below, so staged CIFs are still copied out.
-        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
-
-    try:
-        for row_idx, row in df.iterrows():
-            material_id = str(row.get(args.material_id_col, f"row_{row_idx}"))
-            formula = str(row.get(args.formula_col, "")).strip()
-            spacegroup_raw = row.get(args.spacegroup_col, None)
-            if not formula or pd.isna(formula):
+    for row_idx, row in df.iterrows():
+        material_id = str(row.get(args.material_id_col, f"row_{row_idx}"))
+        formula = str(row.get(args.formula_col, "")).strip()
+        spacegroup_raw = row.get(args.spacegroup_col, None)
+        if not formula or pd.isna(formula):
+            summary.append({
+                "row_idx": row_idx, "material_id": material_id,
+                "formula": "", "spacegroup": "",
+                "generated_count": 0, "valid_count": 0, "saved_count": 0,
+                "status": "missing_formula",
+            })
+            continue
+        # The spacegroup column is only needed when it is actually consumed
+        # (--use_spacegroup). A formula-only CSV -- just a `primitive_formula`
+        # column -- is valid input and must not be skipped.
+        if pd.isna(spacegroup_raw):
+            if args.use_spacegroup:
                 summary.append({
                     "row_idx": row_idx, "material_id": material_id,
-                    "formula": "", "spacegroup": "",
+                    "formula": formula, "spacegroup": "",
                     "generated_count": 0, "valid_count": 0, "saved_count": 0,
-                    "status": "missing_formula",
+                    "status": "missing_spacegroup",
                 })
                 continue
-            # The spacegroup column is only needed when it is actually consumed
-            # (--use_spacegroup). A formula-only CSV -- just a `primitive_formula`
-            # column -- is valid input and must not be skipped.
-            if pd.isna(spacegroup_raw):
-                if args.use_spacegroup:
-                    summary.append({
-                        "row_idx": row_idx, "material_id": material_id,
-                        "formula": formula, "spacegroup": "",
-                        "generated_count": 0, "valid_count": 0, "saved_count": 0,
-                        "status": "missing_spacegroup",
-                    })
-                    continue
-                spacegroup = None
+            spacegroup = None
+        else:
+            spacegroup = int(spacegroup_raw)
+        print(f"[{row_idx + 1}/{len(df)}] material_id={material_id} "
+              f"formula={formula} "
+              f"spacegroup={spacegroup if spacegroup is not None else '-'}")
+
+        try:
+            if args.enumerate_crystal_systems:
+                # Formula-only enumeration over the 7 crystal systems; the CSV
+                # spacegroup is deliberately ignored.
+                generated_arrays = generate_enumerated_over_systems(
+                    model,
+                    formula,
+                    num_samples=args.num_samples_per_formula,
+                    batch_size=args.batch_size,
+                    noise_scale=args.noise_scale,
+                )
             else:
-                spacegroup = int(spacegroup_raw)
-            print(f"[{row_idx + 1}/{len(df)}] material_id={material_id} "
-                  f"formula={formula} "
-                  f"spacegroup={spacegroup if spacegroup is not None else '-'}")
-
-            try:
-                if args.enumerate_crystal_systems:
-                    # Formula-only enumeration over the 7 crystal systems; the CSV
-                    # spacegroup is deliberately ignored.
-                    generated_arrays = generate_enumerated_over_systems(
-                        model,
-                        formula,
-                        num_samples=args.num_samples_per_formula,
-                        batch_size=args.batch_size,
-                        noise_scale=args.noise_scale,
-                    )
-                else:
-                    target_sg = spacegroup if args.use_spacegroup else None
-                    generated_arrays = model.generate_conditioned_samples(
-                        target_formula=formula,
-                        target_spacegroup=target_sg,
-                        num_samples=args.num_samples_per_formula,
-                        batch_size=args.batch_size,
-                        noise_scale=args.noise_scale,
-                    )
-            except Exception as ex:
-                print(f"  generation failed: {ex}")
-                print(traceback.format_exc())
-                summary.append({
-                    "row_idx": row_idx, "material_id": material_id,
-                    "formula": formula, "spacegroup": spacegroup,
-                    "generated_count": 0, "valid_count": 0, "saved_count": 0,
-                    "status": f"generation_failed:{type(ex).__name__}:{ex}",
-                })
-                continue
-
-            formula_tag = normalize_formula(formula)
-            formula_dir = write_dir / formula_tag
-            formula_dir.mkdir(parents=True, exist_ok=True)
-
-            valid_count = 0
-            saved_count = 0
-            relaxed_count = 0
-
-            for sample in generated_arrays:
-                # Generation needs only validity; skip the slow CrystalNN fingerprints.
-                crys = array_dict_to_crystal(sample, save=False, compute_fingerprints=False)
-                if refiner is None:
-                    passes = crys.valid if args.use_comp_validity else crys.struct_valid
-                    if not passes:
-                        continue
-                    structure_to_save = crys.structure
-                else:
-                    # Refine BEFORE the validity gate, not after. An overlapping
-                    # sample is DISCARDED by that gate (structure_validity rejects
-                    # any pair closer than 0.5 Ang), and at k=1 a discarded sample
-                    # is an automatic miss -- rescuing it is the entire point.
-                    # Composition is invariant under refinement, so comp_valid
-                    # carries over; only the structural half is recomputed.
-                    if not getattr(crys, "constructed", False):
-                        continue
-                    structure_to_save = refiner.refine(crys.structure)
-                    passes = structure_validity(structure_to_save)
-                    if args.use_comp_validity:
-                        passes = passes and bool(crys.comp_valid)
-                    if not passes:
-                        continue
-                valid_count += 1
-
-                if relaxer is not None:
-                    if args.max_relax_per_formula > 0 and relaxed_count >= args.max_relax_per_formula:
-                        continue
-                    try:
-                        relaxed = relaxer.relax(
-                            structure_to_save,
-                            fmax=args.relax_fmax,
-                            steps=args.relax_steps,
-                            verbose=False,
-                        )
-                        structure_to_save = relaxed["final_structure"]
-                    except Exception as ex:
-                        print(f"  {args.relaxer} relax failed for sample {sample.get('sample_idx', '?')}: {ex} — saving unrelaxed.")
-                    relaxed_count += 1
-
-                if args.material_prefix:
-                    import re as _re
-                    _tag = _re.sub(r"[^A-Za-z0-9_.-]+", "", material_id) or f"row{row_idx}"
-                    out_path = formula_dir / f"{_tag}_sample_{int(sample['sample_idx'])}.cif"
-                else:
-                    out_path = formula_dir / f"sample_{int(sample['sample_idx'])}.cif"
-                structure_to_save.to(filename=str(out_path))
-                saved_count += 1
-
+                target_sg = spacegroup if args.use_spacegroup else None
+                generated_arrays = model.generate_conditioned_samples(
+                    target_formula=formula,
+                    target_spacegroup=target_sg,
+                    num_samples=args.num_samples_per_formula,
+                    batch_size=args.batch_size,
+                    noise_scale=args.noise_scale,
+                )
+        except Exception as ex:
+            print(f"  generation failed: {ex}")
+            print(traceback.format_exc())
             summary.append({
                 "row_idx": row_idx, "material_id": material_id,
                 "formula": formula, "spacegroup": spacegroup,
-                "generated_count": len(generated_arrays),
-                "valid_count": valid_count, "saved_count": saved_count,
-                "status": "ok",
+                "generated_count": 0, "valid_count": 0, "saved_count": 0,
+                "status": f"generation_failed:{type(ex).__name__}:{ex}",
             })
-            print(f"  -> generated={len(generated_arrays)} valid={valid_count} "
-                  f"saved={saved_count} (relaxed={relaxed_count})")
+            continue
 
-            # Persist incrementally so partial runs are usable
-            pd.DataFrame(summary).to_csv(summary_csv, index=False)
-    finally:
-        if stage_root is not None:
-            n_copied = copy_staged_tree(write_dir, gen_base_dir, args.copy_workers)
-            print(f"Copied {n_copied} staged files to {gen_base_dir}")
+        formula_tag = normalize_formula(formula)
+        formula_dir = gen_base_dir / formula_tag
+        formula_dir.mkdir(parents=True, exist_ok=True)
+
+        valid_count = 0
+        saved_count = 0
+        relaxed_count = 0
+
+        for sample in generated_arrays:
+            # Generation needs only validity; skip the slow CrystalNN fingerprints.
+            crys = array_dict_to_crystal(sample, save=False, compute_fingerprints=False)
+            if refiner is None:
+                passes = crys.valid if args.use_comp_validity else crys.struct_valid
+                if not passes:
+                    continue
+                structure_to_save = crys.structure
+            else:
+                # Refine BEFORE the validity gate, not after. An overlapping
+                # sample is DISCARDED by that gate (structure_validity rejects
+                # any pair closer than 0.5 Ang), and at k=1 a discarded sample
+                # is an automatic miss -- rescuing it is the entire point.
+                # Composition is invariant under refinement, so comp_valid
+                # carries over; only the structural half is recomputed.
+                if not getattr(crys, "constructed", False):
+                    continue
+                structure_to_save = refiner.refine(crys.structure)
+                passes = structure_validity(structure_to_save)
+                if args.use_comp_validity:
+                    passes = passes and bool(crys.comp_valid)
+                if not passes:
+                    continue
+            valid_count += 1
+
+            if relaxer is not None:
+                if args.max_relax_per_formula > 0 and relaxed_count >= args.max_relax_per_formula:
+                    continue
+                try:
+                    relaxed = relaxer.relax(
+                        structure_to_save,
+                        fmax=args.relax_fmax,
+                        steps=args.relax_steps,
+                        verbose=False,
+                    )
+                    structure_to_save = relaxed["final_structure"]
+                except Exception as ex:
+                    print(f"  {args.relaxer} relax failed for sample {sample.get('sample_idx', '?')}: {ex} — saving unrelaxed.")
+                relaxed_count += 1
+
+            if args.material_prefix:
+                import re as _re
+                _tag = _re.sub(r"[^A-Za-z0-9_.-]+", "", material_id) or f"row{row_idx}"
+                out_path = formula_dir / f"{_tag}_sample_{int(sample['sample_idx'])}.cif"
+            else:
+                out_path = formula_dir / f"sample_{int(sample['sample_idx'])}.cif"
+            structure_to_save.to(filename=str(out_path))
+            saved_count += 1
+
+        summary.append({
+            "row_idx": row_idx, "material_id": material_id,
+            "formula": formula, "spacegroup": spacegroup,
+            "generated_count": len(generated_arrays),
+            "valid_count": valid_count, "saved_count": saved_count,
+            "status": "ok",
+        })
+        print(f"  -> generated={len(generated_arrays)} valid={valid_count} "
+              f"saved={saved_count} (relaxed={relaxed_count})")
+
+        # Persist incrementally so partial runs are usable
+        pd.DataFrame(summary).to_csv(summary_csv, index=False)
 
     pd.DataFrame(summary).to_csv(summary_csv, index=False)
     ok = sum(1 for r in summary if r["status"] == "ok")
