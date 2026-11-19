@@ -7,21 +7,8 @@ than the hundreds to thousands of steps many generative CSP models take.
 
 Conditioning is **composition only**: no space group, no reference cell.
 
-This branch holds the current model. Compared with the published version it
-treats atomic positions as **periodic fractional coordinates** and gives the
-network **lattice-plane features**:
-
-- positions live on the torus [0, 1)³: uniform prior, shortest-way interpolation,
-  and wrapping after every sampler step;
-- the network sees each position as sin/cos(2πk·f) for k = 1…8 along each axis
-  (48 numbers per atom) plus sin/cos(2π**G**·f) for the 56 mixed plane directions
-  **G** = (h, k, l) with |h|, |k|, |l| ≤ 2;
-- one lattice per crystal (the Niggli cell, 9 numbers), with the loss weighted
-  10 : 1 between positions and lattice.
-
-The published model (Cartesian positions, arXiv:2609.09799) is on the
-[`cartesian`](https://github.com/usccolumbia/uFlowCSP/tree/cartesian) branch,
-together with its figshare checkpoint.
+The arXiv version of the model is on the
+[`cartesian`](https://github.com/usccolumbia/uFlowCSP/tree/cartesian) branch.
 
 Developed by Sourin Dey and Jianjun Hu, Machine Learning and Evolution Lab,
 University of South Carolina.
@@ -37,7 +24,7 @@ angle_tol=10)`.
 | Test set | Model | k = 1 match rate (%) | k = 20 match rate (%) | RMSE (k = 1) | RMSE (k = 20) |
 |---|---|---|---|---|---|
 | MP-20 (9,046) | 700 epochs (final checkpoint) | 61.02 ± 0.38 | 77.74 ± 0.03 | 0.0645 ± 0.0020 | 0.0467 ± 0.0016 |
-| MPTS-52 (8,096) | 1,200 epochs (chosen on validation) | 27.04 ± 0.29 | 36.22 ± 0.32 | 0.1130 ± 0.0044 | 0.1085 ± 0.0024 |
+| MPTS-52 (8,096) | 1,200 epochs (chosen on validation) | 27.27 ± 0.30 | 36.57 ± 0.24 | 0.1154 ± 0.0052 | 0.1121 ± 0.0023 |
 
 `scripts/benchmark_mp20.sh` and `scripts/benchmark_mpts52.sh` score a checkpoint
 on these test sets (`filtered_*` keys in the summary).
