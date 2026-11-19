@@ -10,7 +10,7 @@ Conditioning is **composition only**: no space group, no reference cell.
 Developed by Sourin Dey and Jianjun Hu, Machine Learning and Evolution Lab,
 University of South Carolina (September 2026).
 [Paper (arXiv:2609.09799)](https://arxiv.org/html/2609.09799v1) ·
-[Pretrained model (figshare)](https://doi.org/10.6084/m9.figshare.33974422)
+[Pretrained model (figshare)](https://doi.org/10.6084/m9.figshare.33974422.v1)
 
 ## Contents
 
@@ -62,7 +62,7 @@ rerun the PyTorch line. ([why](#why-requirementstxt-omits-torch))
 ## 2. Download the pretrained model
 
 The checkpoint (3.1 GB, trained on MP-20) is on figshare:
-[doi:10.6084/m9.figshare.33974422](https://doi.org/10.6084/m9.figshare.33974422).
+[doi:10.6084/m9.figshare.33974422.v1](https://doi.org/10.6084/m9.figshare.33974422.v1).
 Save it as `model.ckpt` in the repository root:
 
 ```bash
