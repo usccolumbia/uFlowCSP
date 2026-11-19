@@ -1,32 +1,25 @@
 #!/usr/bin/env bash
-# Benchmark a checkpoint on the MP-20 test set under the DiffCSP protocol:
-# sample K candidates for each of the 9046 test materials (known-Z formulas,
-# no relaxation) and score any-of-K structure matches and RMSE.
+# Benchmark a checkpoint on the MP-20 test set under the DiffCSP / CrystalFlow protocol:
+# sample K candidates for each of the 9046 test materials (known-Z formulas, no relaxation) and score k=1 and k=K
+# structure matches and RMSE, filtered (published protocol, with SMACT) and unfiltered.
 #
-#   bash scripts/benchmark_mp20.sh model.ckpt
-#   bash scripts/benchmark_mp20.sh logs/<task>/runs/<run>/checkpoints   # picks the best-validation checkpoint
-#   STEPS=1 bash scripts/benchmark_mp20.sh model.ckpt
+#   bash scripts/benchmark_mp20.sh model_mp20.ckpt
+#   STEPS=1 bash scripts/benchmark_mp20.sh model_mp20.ckpt
 #
-# Environment variables: STEPS (5), K (20), BATCH (100), OUT (results/mp20_S<STEPS>_k<K>)
-# Result: $OUT/eval/summary.json -- read diffcsp_match_rate and diffcsp_mean_rmse.
+# Environment variables: STEPS (5), K (20), BATCH (20), NPROC (CPU cores for scoring), OUT (results/mp20_S<STEPS>_k<K>)
+# Result: $OUT/eval/summary.json -- filtered_k1_match_rate, filtered_k<K>_match_rate (compare with published numbers),
+#         the matching RMSEs, and the unfiltered numbers.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 
-CKPT=${1:?usage: bash scripts/benchmark_mp20.sh <checkpoint file or checkpoints directory>}
-STEPS=${STEPS:-5}; K=${K:-20}; BATCH=${BATCH:-100}
+CKPT=${1:?usage: bash scripts/benchmark_mp20.sh <checkpoint file>}
+STEPS=${STEPS:-5}; K=${K:-20}; BATCH=${BATCH:-20}; NPROC=${NPROC:-$(nproc)}
 OUT=${OUT:-results/mp20_S${STEPS}_k${K}}
 GT_DIR=gt_cifs_test
 KNOWNZ_CSV=data/splits/difCSP_test_knownz_full.csv
 RAW_CSV=data/mp_20/raw/all.csv
 
-if [ -d "$CKPT" ]; then
-    # Highest valid_rate wins; it is the last @-field of the file name.
-    best=$(ls -1 "$CKPT"/uflow-best_valid-*.ckpt 2>/dev/null \
-           | awk -F 'valid_rate@' '{print $2"\t"$0}' | sort -k1,1 -gr | head -1 | cut -f2- || true)
-    [ -n "$best" ] || { echo "No uflow-best_valid-*.ckpt in $CKPT" >&2; exit 1; }
-    CKPT=$best
-fi
 [ -f "$CKPT" ] || { echo "Checkpoint not found: $CKPT" >&2; exit 1; }
 echo "checkpoint: $CKPT"
 
@@ -47,9 +40,7 @@ python src/uflowcsp.py --ckpt_path "$CKPT" --csv_path "$KNOWNZ_CSV" \
     --num_samples_per_formula "$K" --batch_size "$BATCH" --num_sampling_steps "$STEPS" \
     --material_prefix --save_generated_dir "$OUT/gen"
 
-# Each material is scored against only its own K candidates; no energy ranking,
-# no space-group analysis.
-python select_top5_and_evaluate.py --gen_dir "$OUT/gen" --gt_dir "$GT_DIR" --csv "$KNOWNZ_CSV" \
-    --output_dir "$OUT/eval" --top_k "$K" --ranker none --skip_sg \
-    --diffcsp --per-material --own-candidates-only
+# Each material is scored against only its own K candidates; no energy ranking.
+python evaluate_diffcsp.py --gen_dir "$OUT/gen" --gt_dir "$GT_DIR" --csv "$KNOWNZ_CSV" \
+    --output_dir "$OUT/eval" --k "$K" --nproc "$NPROC"
 echo "Results: $OUT/eval/summary.json"

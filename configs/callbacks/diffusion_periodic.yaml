@@ -1,0 +1,27 @@
+# diffusion_mp20_only.yaml + one extra ModelCheckpoint that keeps EVERY 100th epoch (99, 199, ...), so the
+# checkpoint can be chosen by validation match rate. Used by scripts/train.sh and scripts/train_mpts52.sh.
+defaults:
+  - ema
+  - model_checkpoint
+  - model_checkpoint_valid_rate
+  - _self_
+
+model_checkpoint:
+  dirpath: ${paths.output_dir}/checkpoints
+  filename: "uflow-epoch@{epoch}-step@{step}-val_mp20_loss@{val_mp20/loss:.4f}"
+  monitor: "val_mp20/loss"
+  mode: "min"
+  save_top_k: 1
+  save_last: True
+
+model_checkpoint_periodic:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  dirpath: ${paths.output_dir}/checkpoints/periodic
+  filename: "uflow-periodic-epoch@{epoch}"
+  every_n_epochs: 100
+  save_top_k: -1
+  save_last: False
+  auto_insert_metric_name: False
+  save_weights_only: False
+  save_on_train_epoch_end: True
+  verbose: True

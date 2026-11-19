@@ -55,12 +55,52 @@ from src.models.denoisers.dit import (
     SiTBlock,
     TimestepEmbedder,
     get_pos_embedding,
+    modulate,
 )
 
 # Number of crystal systems (triclinic, monoclinic, orthorhombic, tetragonal,
 # trigonal, hexagonal, cubic). Index 0 is reserved for the null / unknown class,
 # so valid crystal-system labels are 1..7.
 NUM_CRYSTAL_SYSTEMS = 7
+
+# Integer reciprocal vectors G for periodic rotary attention: the 24 axis harmonics k = 1..8, then the 6 face and
+# 2 body diagonals. Pair p of every head rotates by 2*pi*G_p.f, so q_i.k_j depends on f_i - f_j only.
+ROPE_G = (
+    [[k, 0, 0] for k in range(1, 9)] + [[0, k, 0] for k in range(1, 9)] + [[0, 0, k] for k in range(1, 9)]
+    + [[1, 1, 0], [1, -1, 0], [1, 0, 1], [1, 0, -1], [0, 1, 1], [0, 1, -1], [1, 1, 1], [1, 1, -1]]
+)
+
+
+def _rope_rotate(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    """Rotate channel pairs (p, P + p) of x (B, H, N, hd) by the angles behind cos/sin (B, 1, N, P)."""
+    P = cos.shape[-1]
+    x1, x2, rest = x[..., :P], x[..., P:2 * P], x[..., 2 * P:]
+    return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos, rest], dim=-1)
+
+
+def _rope_block_forward(block, x, c, cos, sin, key_mask):
+    """SiTBlock.forward with periodic rotary attention restricted to real atoms (same weights as SiTBlock).
+
+    q, k and v are rotated by +theta_j and the attention output back by -theta_i, so both the attention weights and
+    the aggregated values depend on fractional DIFFERENCES only (relative, exactly periodic). key_mask (B, N) drops
+    padding keys, which would otherwise act as a fixed origin. Smooth in the coordinates -> JVP-safe.
+    """
+    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = block.adaLN_modulation(c).chunk(6, dim=1)
+    h = modulate(block.norm1(x), shift_msa, scale_msa)
+    a = block.attn
+    B, N, C = h.shape
+    H = a.num_heads
+    hd = C // H
+    q, k, v = a.qkv(h).reshape(B, N, 3, H, hd).permute(2, 0, 3, 1, 4).unbind(0)
+    q, k = getattr(a, "q_norm", nn.Identity())(q), getattr(a, "k_norm", nn.Identity())(k)
+    q, k, v = (_rope_rotate(t_, cos, sin) for t_ in (q, k, v))
+    logits = (q * hd ** -0.5) @ k.transpose(-2, -1)
+    logits = logits.masked_fill(~key_mask[:, None, None, :], float("-inf"))
+    o = _rope_rotate(logits.softmax(dim=-1) @ v, cos, -sin)
+    o = getattr(a, "norm", nn.Identity())(o.transpose(1, 2).reshape(B, N, C))
+    x = x + gate_msa.unsqueeze(1) * a.proj(o)
+    x = x + gate_mlp.unsqueeze(1) * block.mlp(modulate(block.norm2(x), shift_mlp, scale_mlp))
+    return x
 
 # Inclusive space-group-number ranges -> crystal-system index (1..7).
 # Standard ITA space-group numbering (1..230).
@@ -159,6 +199,27 @@ class MeanFlowSiTRawFormulaAtomwiseSystem(nn.Module):
 
                             ONLY valid with fractional coordinates — leave at 0 for
                             Cartesian runs.
+        coord_fourier_mode: "axis" (default) = the per-axis bands above, unchanged.
+                            "axis+cross" = the same per-axis bands PLUS the mixed
+                            harmonics G=(h,k,l) with at least two non-zero entries and
+                            max|h|,|k|,|l| <= coord_fourier_cross_max (one of each +-G
+                            pair), i.e. sin/cos(2*pi*G.f) for plane families such as
+                            (110), (1-10), (111) that a per-axis (separable) embedding
+                            cannot express linearly. Torus runs only.
+        zero_padding_state: Zero the flowed state (coords + lattice) on padding tokens
+                            before featurisation. Attention is NOT masked in SiTBlock,
+                            so padding tokens are seen by every atom; without this
+                            their state is t*noise in training but the frozen prior
+                            (coords) / the live pooled lattice (lattice_per_structure)
+                            during sampling, a train/sample mismatch at every t < 1.
+                            Default False = unchanged behaviour for old checkpoints.
+        use_token_pos_embedding: Add the sinusoidal token-index embedding (default True,
+                            unchanged). False = ablation without it.
+        coord_rope:         Periodic rotary attention on fractional coords (ROPE_G phases), attention
+                            restricted to real atoms. Torus runs only. Default False.
+        coord_abs_input:    Feed the (Fourier) coordinates into x_embedder (default True). False with
+                            coord_rope=True = positions enter ONLY as differences -> the network is
+                            exactly invariant to a global fractional shift.
     """
 
     def __init__(
@@ -181,6 +242,12 @@ class MeanFlowSiTRawFormulaAtomwiseSystem(nn.Module):
         use_atomwise_features: bool = True,
         use_crystal_system_embedding: bool = True,
         coord_fourier_bands: int = 0,
+        coord_fourier_mode: str = "axis",
+        coord_fourier_cross_max: int = 2,
+        zero_padding_state: bool = False,
+        use_token_pos_embedding: bool = True,
+        coord_rope: bool = False,
+        coord_abs_input: bool = True,
     ):
         super().__init__()
         self.input_size = input_size
@@ -206,10 +273,37 @@ class MeanFlowSiTRawFormulaAtomwiseSystem(nn.Module):
             coord_feat_dim = 2 * coord_dim * self.coord_fourier_bands
         else:
             coord_feat_dim = coord_dim
+        self.coord_fourier_mode = str(coord_fourier_mode)
+        assert self.coord_fourier_mode in ("axis", "axis+cross"), coord_fourier_mode
+        if self.coord_fourier_mode == "axis+cross":
+            assert self.coord_fourier_bands > 0 and coord_dim == 3, "axis+cross needs Fourier bands and 3D coords"
+            m = int(coord_fourier_cross_max)
+            rng = range(-m, m + 1)
+            # mixed harmonics only (>= 2 non-zero entries); keep G whose first non-zero entry is positive
+            cross = [
+                (h, k, l) for h in rng for k in rng for l in rng
+                if sum(v != 0 for v in (h, k, l)) >= 2 and next(v for v in (h, k, l) if v != 0) > 0
+            ]
+            self.register_buffer(
+                "coord_fourier_cross_G",
+                2.0 * math.pi * torch.tensor(cross, dtype=torch.float32),
+                persistent=False,
+            )
+            coord_feat_dim += 2 * len(cross)
         self.coord_feat_dim = coord_feat_dim
+        self.zero_padding_state = bool(zero_padding_state)
+        self.use_token_pos_embedding = bool(use_token_pos_embedding)
+        self.coord_rope = bool(coord_rope)
+        self.coord_abs_input = bool(coord_abs_input)
+        assert self.coord_rope or self.coord_abs_input, "positions must enter somewhere"
+        if self.coord_rope:
+            n_pairs = min(len(ROPE_G), (hidden_size // num_heads) // 2)
+            self.register_buffer(
+                "rope_G", 2.0 * math.pi * torch.tensor(ROPE_G[:n_pairs], dtype=torch.float32), persistent=False
+            )
 
         self.model_input_dim = (
-            atom_type_embed_dim + atomwise_dim + coord_feat_dim + lattice_dim
+            atom_type_embed_dim + atomwise_dim + (coord_feat_dim if self.coord_abs_input else 0) + lattice_dim
         )
         self.hidden_size = hidden_size
         self.depth = depth
@@ -332,7 +426,12 @@ class MeanFlowSiTRawFormulaAtomwiseSystem(nn.Module):
         angles = coords.unsqueeze(-1) * self.coord_fourier_freqs
         feats = torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
         # (B, N, coord_dim, 2K) -> (B, N, coord_dim * 2K)
-        return feats.flatten(start_dim=-2).to(coords.dtype)
+        feats = feats.flatten(start_dim=-2).to(coords.dtype)
+        if getattr(self, "coord_fourier_mode", "axis") == "axis+cross":
+            # (B, N, 3) @ (3, G) -> (B, N, G): 2*pi*(h f1 + k f2 + l f3), still exactly periodic
+            cross = coords @ self.coord_fourier_cross_G.to(coords.dtype).T
+            feats = torch.cat([feats, torch.sin(cross), torch.cos(cross)], dim=-1)
+        return feats
 
     def _composition_vector(self, atom_types: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
@@ -368,6 +467,9 @@ class MeanFlowSiTRawFormulaAtomwiseSystem(nn.Module):
         Padding tokens are zeroed out in the continuous branch via mask.
         """
         # --- Separate processing of components ---
+        if getattr(self, "zero_padding_state", False):
+            # Same padding input in training and sampling (see class docstring). Linear -> JVP-safe.
+            x = x * mask[..., None].to(x.dtype)
         coords = x[..., :self.coord_dim]  # First coord_dim are coordinates
         lattice = x[..., self.coord_dim:self.coord_dim+self.lattice_dim]  # Next lattice_dim are lattice
 
@@ -388,20 +490,21 @@ class MeanFlowSiTRawFormulaAtomwiseSystem(nn.Module):
         # flowed continuous state.
         # Coordinates go through the (optional) periodic featurisation first;
         # with coord_fourier_bands=0 this is an identity pass-through.
-        coord_feats = self._featurize_coords(coords)
+        coord_feats = [self._featurize_coords(coords)] if getattr(self, "coord_abs_input", True) else []
         if self.use_atomwise_features:
             atom_features = self.atomic_feature_table[atom_types_cond]  # (B, N, ATOMIC_FEATURE_DIM)
-            x_combined = torch.cat([atom_emb, atom_features, coord_feats, lattice], dim=-1)
+            x_combined = torch.cat([atom_emb, atom_features, *coord_feats, lattice], dim=-1)
         else:
-            x_combined = torch.cat([atom_emb, coord_feats, lattice], dim=-1)  # (B, N, model_input_dim)
+            x_combined = torch.cat([atom_emb, *coord_feats, lattice], dim=-1)  # (B, N, model_input_dim)
 
         # --- Input embedding ---
         x_emb = self.x_embedder(x_combined)  # (B, N, hidden_size)
 
         # Sinusoidal positional embedding based on token indices within each sequence
-        token_index = torch.cumsum(mask, dim=-1, dtype=torch.int64) - 1
-        pos_emb = get_pos_embedding(token_index, self.hidden_size, max_len=2048)
-        x_emb = x_emb + pos_emb
+        if getattr(self, "use_token_pos_embedding", True):
+            token_index = torch.cumsum(mask, dim=-1, dtype=torch.int64) - 1
+            pos_emb = get_pos_embedding(token_index, self.hidden_size, max_len=2048)
+            x_emb = x_emb + pos_emb
 
         # --- Conditioning vector c (broadcast over tokens inside each block) ---
         t_emb = self.t_embedder(t)  # (B, hidden_size)
@@ -436,8 +539,14 @@ class MeanFlowSiTRawFormulaAtomwiseSystem(nn.Module):
             c = c + cs_emb
 
         # --- Transformer blocks ---
-        for block in self.blocks:
-            x_emb = block(x_emb, c)
+        if getattr(self, "coord_rope", False):
+            theta = (coords @ self.rope_G.to(coords.dtype).T).unsqueeze(1)          # (B, 1, N, P)
+            cos, sin = torch.cos(theta), torch.sin(theta)
+            for block in self.blocks:
+                x_emb = _rope_block_forward(block, x_emb, c, cos, sin, mask.bool())
+        else:
+            for block in self.blocks:
+                x_emb = block(x_emb, c)
 
         # --- Output projection ---
         x_out = self.final_layer(x_emb, c)

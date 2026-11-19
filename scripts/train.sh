@@ -1,27 +1,39 @@
 #!/usr/bin/env bash
-# Train the released uFlowCSP model on MP-20 with one GPU.
+# Train uFlowCSP (periodic coordinates + (h,k,l) plane features) on MP-20 with one GPU.
 #
-#   bash scripts/train.sh                  # the released configuration
-#   bash scripts/train.sh logger=null      # extra Hydra overrides go at the end
+#   bash scripts/train.sh                  # the reported configuration (700 epochs, seed 9)
+#   WANDB_MODE=offline bash scripts/train.sh   # log locally instead of to Weights & Biases
+#   bash scripts/train.sh <hydra overrides>    # extra Hydra overrides go at the end
+# Keep a logger: with logger=null no checkpoints are written.
 #
 # Environment variables:
-#   SEED (9), MAX_EPOCHS (700), BATCH_SIZE (256)
+#   SEED (9), MAX_EPOCHS (700), BATCH_SIZE (128) x ACCUM (2) = effective batch 256
+#     (128 x 2 fits a 24 GB GPU; on a 40 GB+ GPU BATCH_SIZE=256 ACCUM=1 is equivalent)
 #   RESUME=<path/to/last.ckpt>             continue a run
-#   FORMULA_EMBEDDING, ATOMWISE_FEATURES, CRYSTAL_SYSTEM (all true): set one to
-#   false to train without that conditioning signal (ablation)
+#   PLANE_FEATURES (true)                  false = ablation with the 48 per-axis Fourier features only
 #
-# Checkpoints are written to logs/train_meanflow_raw_csp_ordered_formula_atomwise_system/runs/<run>/checkpoints/.
+# Model (on top of the released recipe: formula embedding, per-atom chemistry features, crystal-system token with
+# dropout 0.8, MeanFlow flow ratio 0.25, logistic-normal time law, AdamW lr 1e-4 constant):
+#   - positions are fractional coordinates on the torus [0,1)^3: uniform prior, shortest-way interpolation, wrapped
+#     after every sampler step                                                 (meanflow.torus_coords)
+#   - the network sees sin/cos(2 pi k f), k = 1..8, per axis (48 numbers/atom) (denoiser.coord_fourier_bands=8)
+#     plus sin/cos(2 pi G.f) for the 56 mixed plane directions G=(h,k,l), |h|,|k|,|l| <= 2
+#                                                                              (denoiser.coord_fourier_mode=axis+cross)
+#   - one lattice (9 numbers, Niggli cell) per crystal, loss 10 x positions + 1 x lattice
+#   - padding slots zeroed at the network input (identical in training and sampling)
+#
+# Checkpoints: logs/train_uflowcsp_mp20/runs/<run>/checkpoints/ (last.ckpt, best validity, and every 100th epoch in
+# periodic/). The reported model is the final checkpoint, periodic/uflow-periodic-epoch@699.ckpt.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export OMP_NUM_THREADS=1
-export WANDB_PROJECT=${WANDB_PROJECT:-meanflow-csp}
+export WANDB_PROJECT=${WANDB_PROJECT:-uflowcsp}
 
 SEED=${SEED:-9}
-FORMULA_EMBEDDING=${FORMULA_EMBEDDING:-true}
-ATOMWISE_FEATURES=${ATOMWISE_FEATURES:-true}
-CRYSTAL_SYSTEM=${CRYSTAL_SYSTEM:-true}
+PLANE=()
+[ "${PLANE_FEATURES:-true}" = true ] && PLANE=(+diffusion_module.denoiser.coord_fourier_mode=axis+cross)
 
 python src/train_diffusion.py \
     --config-path="$(pwd)/configs" \
@@ -42,18 +54,18 @@ python src/train_diffusion.py \
     +data.datamodule.perm_augment=false \
     +data.datamodule.modulo_translation=false \
     data=mp20_raw \
-    callbacks=diffusion_mp20_only \
+    callbacks=diffusion_periodic \
     trainer=default \
-    trainer.check_val_every_n_epoch=100 \
-    +data.datamodule.batch_size="${BATCH_SIZE:-256}" \
-    +trainer.accumulate_grad_batches=1 \
+    trainer.check_val_every_n_epoch=50 \
+    +data.datamodule.batch_size="${BATCH_SIZE:-128}" \
+    +trainer.accumulate_grad_batches="${ACCUM:-2}" \
     trainer.log_every_n_steps=100 \
     trainer.max_epochs="${MAX_EPOCHS:-700}" \
     +trainer.precision=bf16-mixed \
     logger=wandb \
-    logger.wandb.name="uflowcsp_seed${SEED}" \
+    logger.wandb.name="uflowcsp_mp20_seed${SEED}" \
     logger.wandb.project="${WANDB_PROJECT}" \
-    task_name=train_meanflow_raw_csp_ordered_formula_atomwise_system \
+    task_name=train_uflowcsp_mp20 \
     diffusion_module.denoiser.atom_type_vocab_size=120 \
     diffusion_module.denoiser.atom_type_embed_dim=32 \
     diffusion_module.denoiser.coord_dim=3 \
@@ -64,13 +76,14 @@ python src/train_diffusion.py \
     diffusion_module.denoiser.predict_atom_types=false \
     diffusion_module.denoiser.atom_type_condition_dropout=0.0 \
     diffusion_module.denoiser.class_dropout_prob=0.8 \
-    diffusion_module.denoiser.use_formula_embedding="${FORMULA_EMBEDDING}" \
-    diffusion_module.denoiser.use_atomwise_features="${ATOMWISE_FEATURES}" \
-    diffusion_module.denoiser.use_crystal_system_embedding="${CRYSTAL_SYSTEM}" \
+    diffusion_module.denoiser.use_formula_embedding=true \
+    diffusion_module.denoiser.use_atomwise_features=true \
+    diffusion_module.denoiser.use_crystal_system_embedding=true \
     diffusion_module.denoiser.use_spacegroup_conditioning=false \
     diffusion_module.meanflow.cfg_scale=1.5 \
     diffusion_module.meanflow.cfg_ratio=0.8 \
     diffusion_module.meanflow.flow_ratio=0.25 \
+    "diffusion_module.meanflow.time_dist=[lognorm,-0.4,1.0]" \
     diffusion_module.meanflow.jvp_api=funtorch \
     diffusion_module.meanflow.atom_loss_weight=0.0 \
     diffusion_module.meanflow.proj_lattice=false \
@@ -82,7 +95,18 @@ python src/train_diffusion.py \
     '+diffusion_module.optimizer.betas=[0.9,0.95]' \
     diffusion_module.sampling.num_sampling_steps=1 \
     diffusion_module.sampling.generate_atom_types=false \
+    diffusion_module.sampling.visualize=false \
     diffusion_module.conditioning.spacegroup=true \
+    diffusion_module.meanflow.torus_coords=true \
+    diffusion_module.meanflow.torus_coord_dim=3 \
+    diffusion_module.denoiser.coord_fourier_bands=8 \
+    diffusion_module.meanflow.coord_dim=3 \
+    diffusion_module.meanflow.lattice_dim=9 \
+    diffusion_module.meanflow.coord_loss_weight=10.0 \
+    diffusion_module.meanflow.lattice_loss_weight=1.0 \
+    +diffusion_module.meanflow.lattice_per_structure=true \
+    +diffusion_module.denoiser.zero_padding_state=true \
+    "${PLANE[@]}" \
     seed="${SEED}" \
     ckpt_path="${RESUME:-null}" \
     "$@"

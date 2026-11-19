@@ -2,22 +2,52 @@
 
 uFlowCSP predicts crystal structures from a chemical formula alone. It pairs a
 MeanFlow transport with an all-atom diffusion transformer and decodes a full
-structure — lattice and every atomic position — in 1–5 integration steps, rather
-than the hundreds to thousands of steps many-step generative CSP models take.
+structure (lattice and every atomic position) in 1–5 integration steps, rather
+than the hundreds to thousands of steps many generative CSP models take.
 
 Conditioning is **composition only**: no space group, no reference cell.
 
+This branch holds the current model. Compared with the published version it
+treats atomic positions as **periodic fractional coordinates** and gives the
+network **lattice-plane features**:
+
+- positions live on the torus [0, 1)³: uniform prior, shortest-way interpolation,
+  and wrapping after every sampler step;
+- the network sees each position as sin/cos(2πk·f) for k = 1…8 along each axis
+  (48 numbers per atom) plus sin/cos(2π**G**·f) for the 56 mixed plane directions
+  **G** = (h, k, l) with |h|, |k|, |l| ≤ 2;
+- one lattice per crystal (the Niggli cell, 9 numbers), with the loss weighted
+  10 : 1 between positions and lattice.
+
+The published model (Cartesian positions, arXiv:2609.09799) is on the
+[`cartesian`](https://github.com/usccolumbia/uFlowCSP/tree/cartesian) branch,
+together with its figshare checkpoint.
+
 Developed by Sourin Dey and Jianjun Hu, Machine Learning and Evolution Lab,
-University of South Carolina (September 2026).
-[Paper (arXiv:2609.09799)](https://arxiv.org/html/2609.09799v1) ·
-[Pretrained model (figshare)](https://doi.org/10.6084/m9.figshare.33974422)
+University of South Carolina.
+
+## Results
+
+Test sets, 5 sampling steps, no relaxation, known-Z formulas. Mean ± standard
+deviation over three training seeds. Match rates follow the DiffCSP / CrystalFlow
+protocol, including its SMACT composition filter: the denominator is every test
+material, so the 801 MP-20 and 698 MPTS-52 materials whose formulas fail SMACT
+count as failures.
+
+| Test set | Model | k = 1 match rate (%) | k = 20 match rate (%) | RMSE (k = 1) | RMSE (k = 20) |
+|---|---|---|---|---|---|
+| MP-20 (9,046) | 700 epochs (final checkpoint) | 61.02 ± 0.38 | 77.74 ± 0.03 | 0.0645 ± 0.0020 | 0.0467 ± 0.0016 |
+| MPTS-52 (8,096) | 1,200 epochs (chosen on validation) | 27.04 ± 0.29 | 36.22 ± 0.32 | 0.1130 ± 0.0044 | 0.1085 ± 0.0024 |
+
+`scripts/benchmark_mp20.sh` and `scripts/benchmark_mpts52.sh` reproduce these
+numbers for a checkpoint (`filtered_*` keys in their summary).
 
 ## Contents
 
 **Part 1 — Generate structures** (a GPU and ~10 minutes of setup)
 
 1. [Install](#1-install)
-2. [Download the pretrained model](#2-download-the-pretrained-model)
+2. [Pretrained models](#2-pretrained-models)
 3. [Sample](#3-sample)
 4. [Options](#4-options)
 
@@ -25,7 +55,7 @@ University of South Carolina (September 2026).
 
 5. [Extra setup](#5-extra-setup)
 6. [Train](#6-train)
-7. [Benchmark on MP-20](#7-benchmark-on-mp-20)
+7. [Benchmark](#7-benchmark)
 
 [Troubleshooting](#troubleshooting) · [Citation](#citation)
 
@@ -59,19 +89,21 @@ python -c "import torch; print(torch.__version__)"
 If it prints plain `2.5.1`, the requirements step replaced your CUDA build —
 rerun the PyTorch line. ([why](#why-requirementstxt-omits-torch))
 
-## 2. Download the pretrained model
+## 2. Pretrained models
 
-The checkpoint (3.1 GB, trained on MP-20) is on figshare:
-[doi:10.6084/m9.figshare.33974422](https://doi.org/10.6084/m9.figshare.33974422).
-Save it as `model.ckpt` in the repository root:
+Two checkpoints, one per benchmark (3.2 GB each):
 
-```bash
-curl -L -o model.ckpt https://ndownloader.figshare.com/files/69274087
-md5sum model.ckpt    # expect c1ff449289976c793b06bdbfcc9659ad
-```
+| Checkpoint | Trained on | Use for |
+|---|---|---|
+| `model_mp20.ckpt` | MP-20 (≤ 20 atoms per cell), 700 epochs | cells up to ~20 atoms |
+| `model_mpts52.ckpt` | MPTS-52 (≤ 52 atoms per cell), 1,200 epochs | larger cells |
 
-No config file is needed — the architecture and hyperparameters are stored in
-the checkpoint.
+**Download links will be added here soon.** Until then, train your own model
+([Part 2](#part-2--train-and-benchmark)).
+
+No config file is needed: the architecture and hyperparameters are stored in
+the checkpoint. For the published (Cartesian) checkpoint, use the `cartesian`
+branch.
 
 ## 3. Sample
 
@@ -81,7 +113,7 @@ List formulas in a CSV with a `primitive_formula` column, then run the sampler:
 printf 'primitive_formula\nSiO2\nNaCl\nSrTiO3\n' > test.csv
 
 python src/uflowcsp.py \
-    --ckpt_path model.ckpt \
+    --ckpt_path model_mp20.ckpt \
     --csv_path test.csv \
     --num_samples_per_formula 5 \
     --num_sampling_steps 5 \
@@ -98,15 +130,14 @@ out/
 └── SrTiO3/sample_0.cif … sample_4.cif
 ```
 
-This takes under a minute on one RTX 3090, most of it loading the model. Samples
-that fail the validity check are dropped, so a folder can hold fewer than
+Samples that fail the validity check (any two atoms closer than 0.5 Å, or a cell
+volume below 0.1 Å³) are dropped, so a folder can hold fewer than
 `--num_samples_per_formula` files.
 
 **What the formula means.** The formula sets the exact atom count of the
 generated cell: `SiO2` gives a 3-atom cell, `Si3O6` a 9-atom cell. Write out the
-full cell contents if you want a larger cell. The model was trained on MP-20
-(at most 20 atoms per cell) and is most reliable on small cells; expect lower
-quality above ~20 atoms.
+full cell contents if you want a larger cell. Use the MP-20 model for cells up to
+~20 atoms and the MPTS-52 model for larger ones.
 
 Generated structures are **not relaxed**. Relax them before computing
 properties — see `--relax` below.
@@ -121,7 +152,6 @@ properties — see `--relax` below.
 | Sample faster | `--num_sampling_steps 1` (one-step decoding) |
 | Relax the output with ORB v3 | install ORB (below), then append `--relax` |
 | Relax on CPU | `--relax --relax_device cpu --orb_model orb_v3_conservative_20_omat --relax_steps 50` |
-| Also condition on a space group | `--use_spacegroup` (off by default; conditioning is composition-only) |
 | See every option | `python src/uflowcsp.py --help` |
 
 **Installing the ORB relaxer.** Two commands, because `orb-models` declares
@@ -166,7 +196,8 @@ ls -l data/mp_20/raw/all.csv    # must be ~135 MB, not ~130 bytes
 That is the only manual data step — everything else is built on demand.
 
 **Weights & Biases** logging is on by default: `wandb login` once, or export
-`WANDB_API_KEY`, or set `WANDB_MODE=offline`, or append `logger=null`.
+`WANDB_API_KEY`, or set `WANDB_MODE=offline` to log locally. Do not switch the
+logger off (`logger=null`): no checkpoints are written without it.
 
 <details>
 <summary>Data files: what ships and what is derived</summary>
@@ -208,63 +239,73 @@ It is **not** shipped and cannot be rebuilt from the files above (only 151 of it
 
 </details>
 
-## 6. Train
-
-Train the released model — atom ordering + formula embedding + per-atom chemistry
-features + coarse crystal-system token — from the repository root:
+**The MPTS-52 data** is not shipped. Build it once from DiffCSP's split CSVs:
 
 ```bash
-bash scripts/train.sh
+git clone --depth 1 https://github.com/jiaor17/DiffCSP.git /tmp/DiffCSP
+python scripts/prepare_mpts52.py --diffcsp_dir /tmp/DiffCSP/data/mpts_52
 ```
 
-Append any Hydra override at the end, e.g. `bash scripts/train.sh logger=null`
-to train without Weights & Biases. Other settings are environment variables:
+This writes `data/mpts/raw/all.csv`, `data/splits/mpts_{train,val,test}_ids.json`,
+the reference CIFs `gt_cifs_mpts52_test/` and the test-target list
+`data/splits/mpts52_test_knownz.csv`.
+
+## 6. Train
+
+From the repository root:
+
+```bash
+bash scripts/train.sh            # MP-20, 700 epochs
+bash scripts/train_mpts52.sh     # MPTS-52, 1,200 epochs (after prepare_mpts52.py)
+```
+
+The two runs differ only in the data and in the MeanFlow time-pair law
+(MP-20: logistic-normal; MPTS-52: uniform on [0, 1]). The 180 CSPBench formulas
+(`180_primitive.csv`) are excluded from MP-20 training. Append any Hydra override
+at the end. To train without a Weights & Biases account, set `WANDB_MODE=offline`.
+Other settings are environment variables:
 
 | Variable | Default | Effect |
 |---|---|---|
 | `SEED` | 9 | random seed |
-| `MAX_EPOCHS` | 700 | training length |
-| `BATCH_SIZE` | 256 | lower it if the GPU runs out of memory |
+| `MAX_EPOCHS` | 700 (MP-20), 1200 (MPTS-52) | training length |
+| `BATCH_SIZE` × `ACCUM` | 128 × 2 | effective batch 256; fits a 24 GB GPU. With 40 GB or more, `BATCH_SIZE=256 ACCUM=1` is equivalent |
 | `RESUME` | — | path to a `last.ckpt` to continue a run |
-| `FORMULA_EMBEDDING` | true | `false` trains without the formula embedding |
-| `ATOMWISE_FEATURES` | true | `false` trains without the per-atom chemistry features |
-| `CRYSTAL_SYSTEM` | true | `false` trains without the crystal-system token |
+| `PLANE_FEATURES` | true | `false` trains with the 48 per-axis features only (ablation) |
 
-For example, `SEED=10 CRYSTAL_SYSTEM=false bash scripts/train.sh`.
+**Checkpoints.** Training writes `logs/train_uflowcsp_<dataset>/runs/<run>/checkpoints/`;
+every 100th epoch is kept in `periodic/`. The reported models are
+`periodic/uflow-periodic-epoch@699.ckpt` (MP-20, the final checkpoint) and
+`periodic/uflow-periodic-epoch@1199.ckpt` (MPTS-52). Copy the one you want to
+`model_mp20.ckpt` or `model_mpts52.ckpt`; the rename also avoids quoting the `@`.
 
-**Using your own checkpoint.** Training writes
-`logs/train_meanflow_raw_csp_ordered_formula_atomwise_system/runs/<run>/checkpoints/`
-with `last.ckpt` plus `uflow-best_valid-…-valid_rate@<v>.ckpt` files. Sample from
-the best-validation file with the highest `valid_rate`, **not** `last.ckpt`, since
-validation performance does not increase monotonically to the final epoch. Copy it
-to `model.ckpt` and follow [Sample](#3-sample); the rename also avoids quoting the
-`@` in its name.
+## 7. Benchmark
 
-## 7. Benchmark on MP-20
-
-Score a checkpoint on the 9046 MP-20 test materials under the DiffCSP protocol
-(any-of-k structure match, no relaxation, each material scored against only its
-own candidates):
+Score a checkpoint on a test set under the DiffCSP / CrystalFlow protocol (k
+candidates per material, no relaxation, each material scored against only its own
+candidates):
 
 ```bash
-bash scripts/benchmark_mp20.sh model.ckpt
+bash scripts/benchmark_mp20.sh model_mp20.ckpt         # 9,046 MP-20 test materials
+bash scripts/benchmark_mpts52.sh model_mpts52.ckpt     # 8,096 MPTS-52 test materials
 ```
 
-Pass a `checkpoints/` directory instead of a file to use its best-validation
-checkpoint. The defaults are k=20 candidates and S=5 steps; set `K` and `STEPS`
-to change them, e.g. `STEPS=1 bash scripts/benchmark_mp20.sh model.ckpt`. The
-reference CIFs and the known-Z CSV are built on the first run. Results:
+The defaults are k = 20 candidates and S = 5 steps; set `K` and `STEPS` to change
+them. Results go to `results/<dataset>_S<S>_k<K>/eval/summary.json`:
 
-```
-results/mp20_S<S>_k<K>/eval/summary.json
-```
+| Key | Meaning |
+|---|---|
+| `filtered_k1_match_rate`, `filtered_k20_match_rate` | published protocol (SMACT composition validity, structural validity, CrystalNN fingerprint; at k = 1 the reference must be valid too). Compare these with published numbers |
+| `filtered_k1_rmse`, `filtered_k20_rmse` | mean RMSE over matched materials |
+| `unfiltered_*` | the same without the SMACT and fingerprint checks |
 
-Read `diffcsp_match_rate` and `diffcsp_mean_rmse`. Check that `n_formulas_total`
-is 9046 and `n_no_folder` is 0; a non-zero `n_no_folder` means sampling stopped
-early.
+A match is `StructureMatcher(stol=0.5, angle_tol=10, ltol=0.3).get_rms_dist(...)`
+not returning `None`. `evaluate_diffcsp.py` can also score any folder of
+`<material_id>_sample_<i>.cif` files.
 
-Results vary between training seeds. To estimate the spread, train with several
-values of `SEED` and benchmark each run.
+Results vary between training seeds (MP-20 k = 1: about ±0.4 points over three
+seeds). To estimate the spread, train with several values of `SEED` and benchmark
+each run.
 
 ---
 
@@ -272,10 +313,8 @@ values of `SEED` and benchmark each run.
 
 #### Warnings printed during sampling
 
-A `pkg_resources is deprecated` warning, a pymatgen `gcd is deprecated` warning,
-and a long note about `meanflow.lattice_per_structure=False` are all expected.
-The last one explains a setting the released checkpoint was trained with; no
-action is needed to sample from it.
+A `pkg_resources is deprecated` warning and a pymatgen `gcd is deprecated`
+warning are expected.
 
 #### Why `requirements.txt` omits torch
 
@@ -301,11 +340,6 @@ The ORB install missed a dependency. List them all and install everything except
 python -c "import importlib.metadata as m; print('\n'.join(m.requires('orb-models')))"
 ```
 
-#### `model.ckpt` fails to load
-
-The download was probably interrupted. Check `md5sum model.ckpt` against
-`c1ff449289976c793b06bdbfcc9659ad` and download again if it differs.
-
 #### A data file looks empty or has the wrong columns
 
 `data/mp_20/raw/all.csv` is a Git LFS pointer, not the real file. See
@@ -314,23 +348,18 @@ The download was probably interrupted. Check `md5sum model.ckpt` against
 #### Training dies immediately with a W&B error
 
 No Weights & Biases credentials are set. Run `wandb login`, or train with
-`WANDB_MODE=offline`, or append `logger=null`.
+`WANDB_MODE=offline`.
 
 ---
 
 ## Citation
 
-If you use uFlowCSP, please cite the paper:
+A paper describing this version is in preparation. Until then, please cite the
+uFlowCSP paper:
 
 > Dey, Sourin, Dipannoy Das Gupta, Lai Wei, Sadman Sadeed Omee, and Jianjun Hu.
 > "uFlowCSP: Crystal Structure Prediction using Mean flow generative models."
 > arXiv preprint arXiv:2609.09799 (2026).
 > [Paper](https://arxiv.org/html/2609.09799v1)
 
-and, if you use the released checkpoint:
-
-> Dey, Sourin (2026). uFlowCSP: Fast Crystal Structure Prediction using Mean flow
-> generative models. figshare.
-> https://doi.org/10.6084/m9.figshare.33974422.v1
-
-Code is released under the MIT License; the pretrained model under CC BY 4.0.
+Code is released under the MIT License.

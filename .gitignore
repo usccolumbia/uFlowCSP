@@ -29,6 +29,12 @@ data/mp_20/processed/*
 !data/mp_20/processed/.gitkeep
 # built by make_knownz_csv.py
 data/splits/difCSP_test_knownz_full.csv
+# built by scripts/prepare_mpts52.py
+data/mpts/
+data/mpts_raw/
+data/splits/mpts_*_ids.json
+data/splits/mpts52_test_knownz.csv
+gt_cifs_mpts52_test/
 
 # --- archives ---
 *.zip
