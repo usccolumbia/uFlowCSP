@@ -31,18 +31,15 @@ University of South Carolina.
 Test sets, 5 sampling steps, no relaxation, known-Z formulas. Mean ± standard
 deviation over three training seeds; the denominator is every test material. A
 match follows the DiffCSP rule (`StructureMatcher(stol=0.5, ltol=0.3,
-angle_tol=10)`). MP-20 numbers also apply DiffCSP's SMACT composition filter, so
-the 801 MP-20 test materials whose formulas fail SMACT count as failures; MPTS-52
-numbers count every structurally valid candidate (no SMACT filter).
+angle_tol=10)`).
 
 | Test set | Model | k = 1 match rate (%) | k = 20 match rate (%) | RMSE (k = 1) | RMSE (k = 20) |
 |---|---|---|---|---|---|
 | MP-20 (9,046) | 700 epochs (final checkpoint) | 61.02 ± 0.38 | 77.74 ± 0.03 | 0.0645 ± 0.0020 | 0.0467 ± 0.0016 |
 | MPTS-52 (8,096) | 1,200 epochs (chosen on validation) | 29.05 ± 0.22 | 39.07 ± 0.27 | 0.1129 ± 0.0048 | 0.1106 ± 0.0025 |
 
-`scripts/benchmark_mp20.sh` and `scripts/benchmark_mpts52.sh` reproduce these
-numbers for a checkpoint (MP-20: `filtered_*` keys in the summary; MPTS-52:
-`unfiltered_*` keys).
+`scripts/benchmark_mp20.sh` and `scripts/benchmark_mpts52.sh` score a checkpoint
+on these test sets.
 
 ## Contents
 
@@ -297,9 +294,9 @@ them. Results go to `results/<dataset>_S<S>_k<K>/eval/summary.json`:
 
 | Key | Meaning |
 |---|---|
-| `filtered_k1_match_rate`, `filtered_k20_match_rate` | published protocol (SMACT composition validity, structural validity, CrystalNN fingerprint; at k = 1 the reference must be valid too). Compare these with published numbers |
+| `filtered_k1_match_rate`, `filtered_k20_match_rate` | candidates must pass DiffCSP's validity check (as in its `compute_metrics.py`); at k = 1 the reference must be valid too |
 | `filtered_k1_rmse`, `filtered_k20_rmse` | mean RMSE over matched materials |
-| `unfiltered_*` | the same without the SMACT and fingerprint checks |
+| `unfiltered_*` | the same, with structural validity only |
 
 A match is `StructureMatcher(stol=0.5, angle_tol=10, ltol=0.3).get_rms_dist(...)`
 not returning `None`. `evaluate_diffcsp.py` can also score any folder of
